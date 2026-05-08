@@ -10,6 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "dist": "electron-builder --win nsis",
+    "dist:signed": "electron-builder --win nsis --publish never",
     "publish": "electron-forge publish",
     "lint": "echo \"No linting configured\""
   },
@@ -34,8 +35,9 @@
     "@electron-forge/plugin-fuses": "^7.11.1",
     "@electron/fuses": "^1.8.0",
     "autoprefixer": "^10.5.0",
-    "electron-builder": "^26.0.12",
     "electron": "42.0.0",
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^3.0.1",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.2.4"
   },
@@ -57,7 +59,16 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icons/app.ico",
+      "signAndEditExecutable": true,
+      "verifyUpdateCodeSignature": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "JoYedS Cleaner Setup ${version}.${ext}"
     }
   }
 }

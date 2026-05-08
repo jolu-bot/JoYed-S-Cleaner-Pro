@@ -93,3 +93,6 @@ out/
 
 # Electron Builder
 dist/
+
+# Local source asset dropped at repo root
+logo JoyedsCleanner.png
