@@ -6,6 +6,9 @@ function JoyedsCleanerPro() {
   const [statusMessage, setStatusMessage] = useState('Pret.');
   const [isAdmin, setIsAdmin] = useState(false);
   const [system, setSystem] = useState({ cpu: 0, ram: 0, storage: 0, lowDisk: false });
+  const [executionOpen, setExecutionOpen] = useState(false);
+  const [executionLines, setExecutionLines] = useState([]);
+  const [activeToolLabel, setActiveToolLabel] = useState('');
 
   const i18n = {
     fr: {
@@ -29,6 +32,13 @@ function JoyedsCleanerPro() {
       needAdmin: 'Cette action exige un lancement en administrateur.',
       backupFailed: 'Sauvegarde systeme impossible. Execution annulee :',
       backupReady: 'Sauvegarde systeme creee :',
+      relaunchAdmin: 'Relancer en admin',
+      openBackups: 'Ouvrir sauvegardes',
+      executionTitle: 'Console d execution',
+      executionEmpty: 'Aucune execution en cours.',
+      close: 'Fermer',
+      adminRestarting: 'Redemarrage en mode administrateur...',
+      adminRestartFailed: 'Impossible de relancer en admin :',
     },
     en: {
       title: "JoYed'S Cleaner Pro",
@@ -51,6 +61,13 @@ function JoyedsCleanerPro() {
       needAdmin: 'This action requires administrator mode.',
       backupFailed: 'System backup failed. Execution cancelled:',
       backupReady: 'System backup created:',
+      relaunchAdmin: 'Restart as admin',
+      openBackups: 'Open backups',
+      executionTitle: 'Execution console',
+      executionEmpty: 'No active execution.',
+      close: 'Close',
+      adminRestarting: 'Restarting in administrator mode...',
+      adminRestartFailed: 'Unable to restart as admin:',
     },
   };
 
@@ -137,6 +154,39 @@ function JoyedsCleanerPro() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!window.joyedsCleaner?.onExecutionLog) {
+      return undefined;
+    }
+    const unsubscribe = window.joyedsCleaner.onExecutionLog((entry) => {
+      const text = (entry?.text || '').trim();
+      if (!text) {
+        return;
+      }
+      setExecutionLines((prev) => [...prev, `[${entry.level || 'info'}] ${text}`]);
+    });
+    return unsubscribe;
+  }, []);
+
+  const handleRelaunchAdmin = async () => {
+    if (!window.joyedsCleaner?.relaunchAsAdmin) {
+      return;
+    }
+    const result = await window.joyedsCleaner.relaunchAsAdmin();
+    if (result.ok) {
+      setStatusMessage(t.adminRestarting);
+      return;
+    }
+    setStatusMessage(`${t.adminRestartFailed} ${result.error || 'unknown error'}`);
+  };
+
+  const handleOpenBackups = async () => {
+    if (!window.joyedsCleaner?.openBackupFolder) {
+      return;
+    }
+    await window.joyedsCleaner.openBackupFolder();
+  };
+
   const handleRun = async (toolId) => {
     if (!window.joyedsCleaner) {
       setStatusMessage(t.noBridge);
@@ -152,6 +202,9 @@ function JoyedsCleanerPro() {
     }
 
     setRunningToolId(toolId);
+    setExecutionOpen(true);
+    setExecutionLines([]);
+    setActiveToolLabel(tools.find((item) => item.id === toolId)?.title || toolId);
     setStatusMessage(t.running);
 
     const result = await window.joyedsCleaner.runTool({
@@ -215,6 +268,18 @@ function JoyedsCleanerPro() {
     <div className={palette.page}>
       <div className="max-w-7xl mx-auto">
         <div className="flex justify-end gap-3 mb-6">
+          <button
+            onClick={handleOpenBackups}
+            className="px-4 py-2 rounded-xl bg-emerald-500 text-black font-semibold"
+          >
+            {t.openBackups}
+          </button>
+          <button
+            onClick={handleRelaunchAdmin}
+            className="px-4 py-2 rounded-xl bg-amber-500 text-black font-semibold"
+          >
+            {t.relaunchAdmin}
+          </button>
           <button
             onClick={() => setLanguage(language === 'fr' ? 'en' : 'fr')}
             className="px-4 py-2 rounded-xl bg-cyan-500 text-black font-semibold"
@@ -305,6 +370,26 @@ function JoyedsCleanerPro() {
         </div>
 
         <div className="mt-8 text-center text-cyan-400 text-sm">{statusMessage}</div>
+
+        <div className={`${palette.card} mt-8 rounded-3xl p-6`}>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xl font-bold text-cyan-400">
+              {t.executionTitle}{activeToolLabel ? ` - ${activeToolLabel}` : ''}
+            </h3>
+            <button
+              onClick={() => setExecutionOpen(!executionOpen)}
+              className="px-3 py-1 rounded-lg bg-zinc-700 text-white text-sm"
+            >
+              {executionOpen ? t.close : t.executionTitle}
+            </button>
+          </div>
+
+          {executionOpen ? (
+            <div className="rounded-2xl bg-black border border-zinc-800 p-4 h-56 overflow-auto font-mono text-xs whitespace-pre-wrap">
+              {executionLines.length ? executionLines.join('\n') : t.executionEmpty}
+            </div>
+          ) : null}
+        </div>
 
         <div className={`mt-12 text-center ${palette.footer} text-sm`}>
           Powered by JoYed'S • Future Ready • Windows Optimization Suite

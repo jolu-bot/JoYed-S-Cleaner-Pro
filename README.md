@@ -33,9 +33,16 @@ Notes:
 ## Securite integree
 
 - Verification mode administrateur avant actions sensibles.
+- Bouton de relance en administrateur directement depuis l'application.
 - Confirmation utilisateur obligatoire sur actions sensibles.
 - Creation d'un point de restauration avant execution sensible.
 - Sauvegarde operationnelle dans Documents/JoYedsCleanerBackups.
+
+## Observabilite d execution
+
+- Console d execution integree dans l'application.
+- Affichage en temps reel des etapes, sorties standard et erreurs.
+- Bouton d'ouverture directe du dossier de sauvegardes.
 
 ## Logo et icone
 

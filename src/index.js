@@ -1,9 +1,11 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const os = require('node:os');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
+
+let mainWindowRef = null;
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
@@ -31,10 +33,21 @@ const createWindow = () => {
 
   // and load the index.html of the app.
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindowRef = mainWindow;
 
   if (!app.isPackaged) {
     mainWindow.webContents.openDevTools();
   }
+};
+
+const sendExecutionLog = (entry) => {
+  if (!mainWindowRef || mainWindowRef.isDestroyed()) {
+    return;
+  }
+  mainWindowRef.webContents.send('system:execution-log', {
+    timestamp: new Date().toISOString(),
+    ...entry,
+  });
 };
 
 const scriptMap = {
@@ -47,6 +60,7 @@ const scriptMap = {
 };
 
 const sensitiveTools = new Set(['pro-clean', 'network-boost', 'maintenance', 'auto-mode']);
+const backupRootPath = () => path.join(app.getPath('documents'), 'JoYedsCleanerBackups');
 
 const getScriptsBasePath = () => {
   if (app.isPackaged) {
@@ -72,6 +86,35 @@ const runPowershell = (command) =>
     );
   });
 
+const relaunchAsAdmin = async () => {
+  const admin = await isUserAdmin();
+  if (admin) {
+    return { ok: true, alreadyAdmin: true };
+  }
+
+  const escaped = (value) => String(value).replace(/'/g, "''");
+  let startCommand = '';
+
+  if (app.isPackaged) {
+    startCommand = `Start-Process -FilePath '${escaped(process.execPath)}' -Verb RunAs`;
+  } else {
+    const electronPath = process.execPath;
+    const args = process.argv.slice(1).map((arg) => `\"${arg.replace(/\"/g, '\\\\"')}\"`).join(' ');
+    startCommand = `Start-Process -FilePath '${escaped(electronPath)}' -ArgumentList '${escaped(args)}' -Verb RunAs`;
+  }
+
+  const relaunched = await runPowershell(startCommand);
+  if (!relaunched.ok) {
+    return {
+      ok: false,
+      error: relaunched.stderr || relaunched.error?.message || 'Impossible de relancer en administrateur.',
+    };
+  }
+
+  setTimeout(() => app.quit(), 300);
+  return { ok: true, restarting: true };
+};
+
 const isUserAdmin = async () => {
   const probe = await runPowershell(
     '$p=[Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent();$p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)'
@@ -80,7 +123,7 @@ const isUserAdmin = async () => {
 };
 
 const createSafetyBackup = async (toolId) => {
-  const backupRoot = path.join(app.getPath('documents'), 'JoYedsCleanerBackups');
+  const backupRoot = backupRootPath();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupFolder = path.join(backupRoot, `${stamp}-${toolId}`);
 
@@ -152,9 +195,34 @@ const runAllowedScript = (toolId) =>
       return;
     }
 
-    execFile('cmd.exe', ['/c', scriptPath], { windowsHide: true, cwd: path.dirname(scriptPath) }, (error, stdout, stderr) => {
-      if (error) {
-        resolve({ ok: false, error: stderr || error.message });
+    const child = spawn('cmd.exe', ['/c', scriptPath], {
+      windowsHide: true,
+      cwd: path.dirname(scriptPath),
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      const text = chunk.toString();
+      stdout += text;
+      sendExecutionLog({ level: 'info', text });
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      sendExecutionLog({ level: 'error', text });
+    });
+
+    child.on('error', (error) => {
+      sendExecutionLog({ level: 'error', text: error.message });
+      resolve({ ok: false, error: error.message });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        resolve({ ok: false, error: stderr || `Sortie script avec code ${code}.` });
         return;
       }
       resolve({ ok: true, output: stdout || '' });
@@ -217,6 +285,13 @@ const diskUsagePercent = () =>
   });
 
 ipcMain.handle('system:is-admin', async () => isUserAdmin());
+ipcMain.handle('system:relaunch-as-admin', async () => relaunchAsAdmin());
+ipcMain.handle('system:open-backup-folder', async () => {
+  const folder = backupRootPath();
+  await fs.mkdir(folder, { recursive: true });
+  const error = await shell.openPath(folder);
+  return { ok: !error, folder, error };
+});
 
 ipcMain.handle('system:run-tool', async (_event, payload) => {
   const request = typeof payload === 'string' ? { toolId: payload, confirmed: false } : payload || {};
@@ -231,20 +306,32 @@ ipcMain.handle('system:run-tool', async (_event, payload) => {
     return { ok: false, requiresConfirmation: true, error: 'Confirmation requise.' };
   }
 
+  sendExecutionLog({ level: 'step', text: `Demarrage de la tache ${toolId}...` });
+
   const admin = await isUserAdmin();
   if (sensitive && !admin) {
+    sendExecutionLog({ level: 'warn', text: 'Execution bloquee: droits administrateur requis.' });
     return { ok: false, requiresAdmin: true, error: 'Execution admin requise.' };
   }
 
   let backup = null;
   if (sensitive) {
+    sendExecutionLog({ level: 'step', text: 'Creation du point de restauration et sauvegarde metadata...' });
     backup = await createSafetyBackup(toolId);
     if (!backup.ok) {
+      sendExecutionLog({ level: 'error', text: backup.error || 'Echec sauvegarde pre-execution.' });
       return { ok: false, backup, error: backup.error };
     }
+    sendExecutionLog({ level: 'success', text: `Sauvegarde creee: ${backup.folder}` });
   }
 
+  sendExecutionLog({ level: 'step', text: 'Execution du script en cours...' });
   const result = await runAllowedScript(toolId);
+  sendExecutionLog({
+    level: result.ok ? 'success' : 'error',
+    text: result.ok ? 'Execution terminee avec succes.' : `Execution en erreur: ${result.error}`,
+  });
+
   return {
     ...result,
     backup,
